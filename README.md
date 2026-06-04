@@ -98,6 +98,42 @@ server {
   ssl_certificate     /etc/nginx/certs/guac.crt;
   ssl_certificate_key /etc/nginx/certs/guac.key;
 
+  # WebSocket tunnel endpoint for Guacamole
+  location /websocket-tunnel {
+    proxy_pass http://guacamole:8080/guacamole/websocket-tunnel;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "Upgrade";
+    proxy_set_header Sec-WebSocket-Protocol $http_sec_websocket_protocol;
+    proxy_set_header Sec-WebSocket-Extensions $http_sec_websocket_extensions;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Forwarded-Port $server_port;
+    proxy_read_timeout 3600;
+    proxy_send_timeout 3600;
+    proxy_buffering off;
+  }
+
+  # Support explicit /guacamole/websocket-tunnel paths
+  location /guacamole/websocket-tunnel {
+    proxy_pass http://guacamole:8080/guacamole/websocket-tunnel;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "Upgrade";
+    proxy_set_header Sec-WebSocket-Protocol $http_sec_websocket_protocol;
+    proxy_set_header Sec-WebSocket-Extensions $http_sec_websocket_extensions;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto https;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Forwarded-Port $server_port;
+    proxy_read_timeout 3600;
+    proxy_send_timeout 3600;
+    proxy_buffering off;
+  }
+
   location / {
     proxy_pass http://guacamole:8080/guacamole/;
     proxy_set_header Host $host;
@@ -156,6 +192,7 @@ No path-based routing or regex rewrites are required.
 Confirms stack health before exposing to users.
 
 - Guacamole (local): curl -k https://127.0.0.1:8081/ returns 200
+- WebSocket tunnel: curl -i -k -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Protocol: guacamole' https://127.0.0.1:8081/websocket-tunnel returns 101
 - Pangolin target: healthy
 - guacamole.contoso.com loads Guacamole login
 - proxmox.contoso.com loads Proxmox login
@@ -163,6 +200,7 @@ Confirms stack health before exposing to users.
 ## Troubleshooting
 Common failure modes and their fixes.
 
+- Laggy Guacamole sessions: WebSocket tunnel must return 101. If it falls back to HTTP tunnel, keyboard/mouse lag is severe.
 - Pangolin shows unhealthy or 503: backend must speak HTTPS (Newt health checks use HTTPS).
 - Guacamole connection fails with internal error: guacd needs seccomp:unconfined + privileged to open socket pairs for RDP/VNC.
 - Guacamole shows raw translation keys: assets are not served; avoid path routing or preserve subpaths.
