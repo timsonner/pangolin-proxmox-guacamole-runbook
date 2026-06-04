@@ -3,7 +3,7 @@
 Professional runbook for deploying Apache Guacamole on a hardened Proxmox host and exposing services via Pangolin with subdomain-based routing. This avoids path-based rewrites and keeps each service on its own hostname.
 
 ## Scope
-Why: establishes what is covered and what is not.
+Defines what is covered and what is not.
 
 - Guacamole deployed via Docker Compose with hardened runtime flags
 - TLS termination for Guacamole using an nginx sidecar (self-signed certificate)
@@ -11,7 +11,7 @@ Why: establishes what is covered and what is not.
 - Proxmox exposed via its native HTTPS service
 
 ## Architecture summary
-Why: quick mental model for data flow and responsibility boundaries.
+Quick mental model for data flow and responsibility boundaries.
 
 - Pangolin Cloud handles public DNS/edge and forwards traffic to Newt.
 - Newt runs on the host and maintains the secure tunnel plus health checks.
@@ -19,12 +19,12 @@ Why: quick mental model for data flow and responsibility boundaries.
 - Guacamole runs in Docker; guacd handles protocol traffic, Postgres stores config, nginx terminates TLS.
 
 ## Guacamole deployment (hardened)
-Why: ensures a stable Guacamole stack on hardened kernels and exposes it safely.
+Ensures a stable Guacamole stack on hardened kernels and exposes it safely.
 
 Location: /opt/guacamole
 
 ### Docker Compose (example)
-Why: defines the full Guacamole stack and the TLS front-end in one place.
+Defines the full Guacamole stack and the TLS front-end in one place.
 
 ```
 services:
@@ -79,7 +79,7 @@ volumes:
 ```
 
 ### nginx.conf (TLS termination and proxy)
-Why: serves HTTPS to Pangolin/Newt and maps / to /guacamole/.
+Serves HTTPS to Pangolin/Newt and maps / to /guacamole/.
 
 ```
 server {
@@ -108,7 +108,7 @@ server {
 ```
 
 ### Self-signed certs
-Why: provides local TLS for health checks; public TLS is handled by Pangolin.
+Provides local TLS for health checks; public TLS is handled by Pangolin.
 
 ```
 mkdir -p /opt/guacamole/certs
@@ -119,7 +119,7 @@ openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
 ```
 
 ### Database initialization
-Why: Guacamole will not authenticate without its schema and admin user.
+Guacamole will not authenticate without its schema and admin user.
 
 Guacamole needs its schema loaded into Postgres:
 ```
@@ -142,7 +142,7 @@ Password rotation note:
 - Change immediately
 
 ## Pangolin routing (subdomains)
-Why: subdomains avoid path rewrite edge cases and keep services isolated.
+Subdomains avoid path rewrite edge cases and keep services isolated.
 
 - guacamole.contoso.com -> internal host 192.168.1.x:8081 (HTTPS)
 - proxmox.contoso.com -> internal host 192.168.1.x:8006 (HTTPS)
@@ -150,7 +150,7 @@ Why: subdomains avoid path rewrite edge cases and keep services isolated.
 No path-based routing or regex rewrites are required.
 
 ## Verification
-Why: confirms stack health before exposing to users.
+Confirms stack health before exposing to users.
 
 - Guacamole (local): curl -k https://127.0.0.1:8081/ returns 200
 - Pangolin target: healthy
@@ -158,7 +158,7 @@ Why: confirms stack health before exposing to users.
 - proxmox.contoso.com loads Proxmox login and realm dropdown
 
 ## Troubleshooting
-Why: common failure modes and their fixes.
+Common failure modes and their fixes.
 
 - Pangolin shows unhealthy or 503: backend must speak HTTPS (Newt health checks use HTTPS).
 - Guacamole shows raw translation keys: assets are not served; avoid path routing or preserve subpaths.
