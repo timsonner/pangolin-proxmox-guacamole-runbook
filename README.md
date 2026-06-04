@@ -31,6 +31,9 @@ services:
   guacd:
     image: guacamole/guacd:1.5.5
     restart: unless-stopped
+    security_opt:
+      - seccomp:unconfined
+    privileged: true
 
   db:
     image: postgres:15
@@ -155,11 +158,12 @@ Confirms stack health before exposing to users.
 - Guacamole (local): curl -k https://127.0.0.1:8081/ returns 200
 - Pangolin target: healthy
 - guacamole.contoso.com loads Guacamole login
-- proxmox.contoso.com loads Proxmox login and realm dropdown
+- proxmox.contoso.com loads Proxmox login
 
 ## Troubleshooting
 Common failure modes and their fixes.
 
 - Pangolin shows unhealthy or 503: backend must speak HTTPS (Newt health checks use HTTPS).
+- Guacamole connection fails with internal error: guacd needs seccomp:unconfined + privileged to open socket pairs for RDP/VNC.
 - Guacamole shows raw translation keys: assets are not served; avoid path routing or preserve subpaths.
 - Postgres errors: database does not exist; create the DB and load schema as shown above.
