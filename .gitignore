@@ -1,0 +1,15 @@
+# OS
+.DS_Store
+
+# Logs
+*.log
+
+# Secrets
+*.env
+*.key
+*.pem
+*.pfx
+
+# Build
+*.tmp
+*.swp
