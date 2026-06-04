@@ -205,3 +205,21 @@ Common failure modes and their fixes.
 - Guacamole connection fails with internal error: guacd needs seccomp:unconfined + privileged to open socket pairs for RDP/VNC.
 - Guacamole shows raw translation keys: assets are not served; avoid path routing or preserve subpaths.
 - Postgres errors: database does not exist; create the DB and load schema as shown above.
+- Pangolin TLS shows Traefik default cert: remove and re-add the domain in Pangolin Cloud to re-issue the certificate.
+
+## Pangolin API notes
+Use the Integration API when automating hostnames/resources.
+
+- Base URL: https://api.pangolin.net/v1
+- Auth: Authorization: Bearer <API_KEY>
+- Requires orgId (example: timsonner)
+- Sites: GET /org/{orgId}/sites
+- Domains: GET /org/{orgId}/domains
+- Domains can only update certResolver on wildcard domains (non-wildcard updates return 400).
+- If API returns 403 on site-resources, the key lacks Site Resource permissions.
+
+Information needed from the user to automate:
+- orgId
+- siteId or site niceId
+- API key with Site Resource permissions (if editing site-resources)
+- Domains/hostnames to attach
