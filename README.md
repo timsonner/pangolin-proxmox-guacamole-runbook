@@ -1,32 +1,55 @@
 # Pangolin + Proxmox + Guacamole Runbook
 
-Professional runbook for deploying Apache Guacamole on a hardened Proxmox host and exposing services via Pangolin with subdomain-based routing. This avoids path-based rewrites and keeps each service on its own hostname.
+This repository is a runbook for deploying Apache Guacamole on a Proxmox host and publishing Guacamole and the Proxmox web UI through Pangolin. Each service uses its own hostname (`guacamole.example.com`, `proxmox.example.com`) so traffic stays on subdomain routing.
 
-## Scope
-Defines what is covered and what is not.
+Pangolin Cloud handles public DNS and the edge, then forwards traffic to Newt. Newt runs on the host, keeps the tunnel, and health-checks the backends. Proxmox serves its UI and API over its native HTTPS port. Guacamole runs in Docker: `guacd` carries the remote-desktop protocols, Postgres stores Guacamole data, and an nginx sidecar terminates TLS for the tunnel.
 
-- Guacamole deployed via Docker Compose with hardened runtime flags
-- TLS termination for Guacamole using an nginx sidecar (self-signed certificate)
-- Pangolin/Newt exposure using subdomains (no path-based routing)
-- Proxmox exposed via its native HTTPS service
+The repository contains this runbook and `.gitignore`. It does not contain application source, a Compose file, an nginx config file, scripts, or tests. Copy the snippets below onto the Proxmox host.
 
-## Architecture summary
-Quick mental model for data flow and responsibility boundaries.
+## Prerequisites
 
-- Pangolin Cloud handles public DNS/edge and forwards traffic to Newt.
-- Newt runs on the host and maintains the secure tunnel plus health checks.
-- Proxmox serves its UI/API directly over HTTPS on its native port.
-- Guacamole runs in Docker; guacd handles protocol traffic, Postgres stores config, nginx terminates TLS.
+On the Proxmox host:
 
-## Guacamole deployment (hardened)
-Ensures a stable Guacamole stack on hardened kernels and exposes it safely.
+- Docker with the Compose plugin
+- `openssl`
+- `psql` (PostgreSQL client), able to reach Postgres at `127.0.0.1` as the `guacamole` user
+- A Pangolin site with Newt connected to that host
 
-Location: /opt/guacamole
+Images named in this runbook:
 
-### Docker Compose (example)
-Defines the full Guacamole stack and the TLS front-end in one place.
+- `guacamole/guacd:1.5.5`
+- `postgres:15`
+- `guacamole/guacamole:1.5.5`
+- `nginx:1.27-alpine`
 
+Published hostnames:
+
+- `guacamole.example.com` to `https://<proxmox-host>:8081`
+- `proxmox.example.com` to `https://<proxmox-host>:8006`
+
+## Install, build, run, and test
+
+There is no package manifest, Dockerfile, Makefile, or test suite in this repository. Nothing here is compiled or packaged. The commands below are the host procedure.
+
+### Certificate
+
+The self-signed certificate is for local TLS and Newt health checks. Public TLS stays with Pangolin.
+
+```bash
+mkdir -p /opt/guacamole/certs
+openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
+  -keyout /opt/guacamole/certs/guac.key \
+  -out /opt/guacamole/certs/guac.crt \
+  -subj "/CN=guacamole.example.com"
 ```
+
+### Compose file
+
+Save this as `/opt/guacamole/docker-compose.yml`. Replace `<CHANGE_ME>` with the Postgres password before starting the stack.
+
+`guacd` and the Guacamole container use `seccomp:unconfined` and `privileged: true` so `guacd` can open the socket pairs used for RDP and VNC. Postgres is started with an empty `unix_socket_directories` value. `JAVA_TOOL_OPTIONS` turns off container memory detection and Catalina NIO async.
+
+```yaml
 services:
   guacd:
     image: guacamole/guacd:1.5.5
@@ -81,10 +104,13 @@ volumes:
   db-data:
 ```
 
-### nginx.conf (TLS termination and proxy)
-Serves HTTPS to Pangolin/Newt and maps / to /guacamole/.
+The Compose file does not publish Postgres to the host. The database commands in the next section assume a `psql` client can already reach Postgres on `127.0.0.1`.
 
-```
+### nginx config
+
+Save this as `/opt/guacamole/nginx.conf`. It redirects port 80 to HTTPS, proxies `/` to `/guacamole/`, and proxies both WebSocket tunnel paths to `guacamole:8080`.
+
+```nginx
 server {
   listen 80;
   server_name _;
@@ -98,7 +124,6 @@ server {
   ssl_certificate     /etc/nginx/certs/guac.crt;
   ssl_certificate_key /etc/nginx/certs/guac.key;
 
-  # WebSocket tunnel endpoint for Guacamole
   location /websocket-tunnel {
     proxy_pass http://guacamole:8080/guacamole/websocket-tunnel;
     proxy_http_version 1.1;
@@ -116,7 +141,6 @@ server {
     proxy_buffering off;
   }
 
-  # Support explicit /guacamole/websocket-tunnel paths
   location /guacamole/websocket-tunnel {
     proxy_pass http://guacamole:8080/guacamole/websocket-tunnel;
     proxy_http_version 1.1;
@@ -146,80 +170,94 @@ server {
 }
 ```
 
-### Self-signed certs
-Provides local TLS for health checks; public TLS is handled by Pangolin.
+### Start the stack
 
+```bash
+cd /opt/guacamole
+docker compose up -d
 ```
-mkdir -p /opt/guacamole/certs
-openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
-  -keyout /opt/guacamole/certs/guac.key \
-  -out /opt/guacamole/certs/guac.crt \
-  -subj "/CN=guacamole.local"
-```
+
+After a Postgres password change, run `docker compose up -d` again so the Guacamole container recreates `guacamole.properties`. A container restart leaves the previous credentials in place.
 
 ### Database initialization
-Guacamole will not authenticate without its schema and admin user.
 
-Guacamole needs its schema loaded into Postgres:
-```
-# Create database
+Guacamole authentication needs the schema and the admin user loaded into Postgres.
+
+```bash
 PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U guacamole -d postgres -c "CREATE DATABASE guacamole;"
 
-# Load schema
 cat /opt/guacamole/postgresql/schema/001-create-schema.sql \
   /opt/guacamole/postgresql/schema/002-create-admin-user.sql | \
   PGPASSWORD="$POSTGRES_PASSWORD" psql -h 127.0.0.1 -U guacamole -d guacamole
 ```
 
-Password rotation note:
-- If you change POSTGRES_PASSWORD, run `docker compose up -d` (recreate) so guacamole.properties regenerates.
-- A simple `restart` can leave stale credentials inside the guacamole container.
+`$POSTGRES_PASSWORD` must match the `<CHANGE_ME>` value in the Compose file. The schema files are the Guacamole Postgres schema files on the host at those paths.
 
-### Default login
-- Username: guacadmin
-- Password: guacadmin
-- Change immediately
+### Checks
 
-## Pangolin routing (subdomains)
-Subdomains avoid path rewrite edge cases and keep services isolated.
+From the Proxmox host, after the stack is up:
 
-- guacamole.contoso.com -> internal host 192.168.1.x:8081 (HTTPS)
-- proxmox.contoso.com -> internal host 192.168.1.x:8006 (HTTPS)
+```bash
+curl -k https://127.0.0.1:8081/
+curl -i -k \
+  -H 'Connection: Upgrade' \
+  -H 'Upgrade: websocket' \
+  -H 'Sec-WebSocket-Protocol: guacamole' \
+  https://127.0.0.1:8081/websocket-tunnel
+```
 
-No path-based routing or regex rewrites are required.
+The first command should return HTTP 200. The second should return HTTP 101. In Pangolin, the Guacamole target should be healthy. `https://guacamole.example.com` should show the Guacamole login. `https://proxmox.example.com` should show the Proxmox login.
 
-## Verification
-Confirms stack health before exposing to users.
+## Usage
 
-- Guacamole (local): curl -k https://127.0.0.1:8081/ returns 200
-- WebSocket tunnel: curl -i -k -H 'Connection: Upgrade' -H 'Upgrade: websocket' -H 'Sec-WebSocket-Protocol: guacamole' https://127.0.0.1:8081/websocket-tunnel returns 101
-- Pangolin target: healthy
-- guacamole.contoso.com loads Guacamole login
-- proxmox.contoso.com loads Proxmox login
+Sign in to Guacamole with the default account, then change it:
 
-## Troubleshooting
-Common failure modes and their fixes.
+- Username: `guacadmin`
+- Password: `guacadmin`
 
-- Laggy Guacamole sessions: WebSocket tunnel must return 101. If it falls back to HTTP tunnel, keyboard/mouse lag is severe.
-- Pangolin shows unhealthy or 503: backend must speak HTTPS (Newt health checks use HTTPS).
-- Guacamole connection fails with internal error: guacd needs seccomp:unconfined + privileged to open socket pairs for RDP/VNC.
-- Guacamole shows raw translation keys: assets are not served; avoid path routing or preserve subpaths.
-- Postgres errors: database does not exist; create the DB and load schema as shown above.
-- Pangolin TLS shows Traefik default cert: remove and re-add the domain in Pangolin Cloud to re-issue the certificate.
+Routing:
 
-## Pangolin API notes
-Use the Integration API when automating hostnames/resources.
+- `guacamole.example.com` goes to `https://<proxmox-host>:8081` (nginx in front of Guacamole).
+- `proxmox.example.com` goes to `https://<proxmox-host>:8006` (Proxmox native HTTPS).
 
-- Base URL: https://api.pangolin.net/v1
-- Auth: Authorization: Bearer <API_KEY>
-- Requires orgId (example: timsonner)
-- Sites: GET /org/{orgId}/sites
-- Domains: GET /org/{orgId}/domains
-- Domains can only update certResolver on wildcard domains (non-wildcard updates return 400).
-- If API returns 403 on site-resources, the key lacks Site Resource permissions.
+Hostname routing is sufficient. Path rewrites are not part of this setup.
 
-Information needed from the user to automate:
-- orgId
-- siteId or site niceId
-- API key with Site Resource permissions (if editing site-resources)
-- Domains/hostnames to attach
+### Pangolin Integration API
+
+Use the Integration API when automating hostnames and resources.
+
+- Base URL: `https://<pangolin-api-host>/v1`
+- Auth header: `Authorization: Bearer <API_KEY>`
+- Org id: `<org-id>`
+- Sites: `GET /org/<org-id>/sites`
+- Domains: `GET /org/<org-id>/domains`
+
+`certResolver` updates apply to wildcard domains. A non-wildcard domain update returns HTTP 400. An HTTP 403 on site resources means the API key is missing Site Resource permissions.
+
+To automate a change, you need:
+
+- `<org-id>`
+- A site id or site nice id
+- An API key with Site Resource permissions when editing site resources
+- The hostnames to attach
+
+### Troubleshooting
+
+- Laggy Guacamole sessions: the WebSocket check above must return HTTP 101. An HTTP tunnel fallback makes keyboard and mouse input lag.
+- Pangolin shows the target unhealthy or returns HTTP 503: the backend must speak HTTPS. Newt health checks use HTTPS.
+- Guacamole reports an internal error on connect: `guacd` needs `seccomp:unconfined` and `privileged: true`.
+- Guacamole shows raw translation keys: static assets are not being served. Keep Guacamole on its own hostname and preserve subpaths.
+- Postgres says the database does not exist: create `guacamole` and load the schema with the commands above.
+- Pangolin presents the Traefik default certificate: remove the domain in Pangolin Cloud and add it again so the certificate is reissued.
+
+## Repository layout
+
+```text
+.
+├── .gitignore
+└── README.md
+```
+
+`.gitignore` ignores `.DS_Store`, `*.log`, `*.env`, `*.key`, `*.pem`, `*.pfx`, `*.tmp`, and `*.swp`.
+
+This repository does not include a license file.
